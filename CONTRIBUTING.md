@@ -19,7 +19,7 @@ When filing an issue, please check existing open, or recently closed, issues to 
 reported the issue. Please try to include as much information as you can. Details like these are incredibly useful:
 
 * A reproducible test case or series of steps
-* The version of our code being used (commit id if you are on `staging`)
+* The version of our code being used (commit id if you are on `main`)
 * Any modifications you've made relevant to the bug
 * Anything unusual about your environment or deployment
 
@@ -40,7 +40,7 @@ The bug, feature, and PR templates each ask for a short "Human Overview" written
 ## Contributing via Pull Requests
 Contributions via pull requests are much appreciated. Before sending us a pull request, please ensure that:
 
-1. You are working against the latest source on the `staging` branch, the default branch. Pull requests target `staging`.
+1. You are working against the latest source on the `main` branch, the default branch. Pull requests target `main`.
 2. You check existing open, and recently merged, pull requests to make sure someone else hasn't addressed the problem already.
 3. You open an issue to discuss any significant work - we would hate for your time to be wasted.
 
