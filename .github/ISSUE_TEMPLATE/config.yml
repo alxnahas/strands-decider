@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Security issue
-    url: https://github.com/strands-labs/hobson/blob/staging/SECURITY.md
+    url: https://github.com/strands-labs/strands-decider/blob/main/SECURITY.md
     about: Do not open a public issue for security reports. Follow SECURITY.md.
   - name: Documentation
-    url: https://github.com/strands-labs/hobson/tree/staging/docs
+    url: https://github.com/strands-labs/strands-decider/tree/main/docs
     about: Architecture, routing convention, and other project docs.
