@@ -22,7 +22,7 @@ body:
       options:
         - label: "I have checked README.md and the docs and this is not expected behavior"
           required: true
-        - label: "I have searched [./issues](./issues?q=) and there are no duplicates of my issue"
+        - label: "I have searched [existing issues](https://github.com/strands-labs/strands-decider/issues?q=) and there are no duplicates of my issue"
           required: true
   - type: input
     id: version
