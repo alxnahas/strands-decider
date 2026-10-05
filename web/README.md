@@ -61,7 +61,8 @@ WEIGHTS=$PWD/../dist/weights CHROME=1 DEVICE=webgpu npx playwright test --projec
   `hidden_states`); splits the weights into shards of at most 512 MB (a browser worker cannot allocate one 1 GB
   buffer); and rewrites the int4 embedding lookup into standard ops, so the CPU (WASM) build runs the same graph.
   torch, transformers and peft are whatever this package installs; the ONNX toolchain is pinned in
-  `convert/requirements.txt`. Conversion is deterministic: torch 2.7 and 2.14 give byte-identical weights.
+  `convert/requirements.txt`. Conversion is deterministic on one platform (torch 2.7 and 2.14 give byte-identical
+  weights); Linux x86 and macOS arm64 differ in 0.04% of bytes (rounding), with the same graph.
 - **Check.** `check.py` runs `test/questions.json` (47 questions: the official examples, a 27-item benchmark,
   structured states and options, criteria, truncated states and questions, multi-question requests) through both,
   and fails on a different answer where the reference is not a near-tie (top-two margin under 0.05) or a mean
@@ -100,6 +101,19 @@ A release `convert.py` cannot handle (a base model other than Qwen3.5, a non-poi
 and the site keeps serving the last good release.
 
 One-time setup is in [MAINTAINING.md](../MAINTAINING.md#the-browser-demo).
+
+## Versions
+
+Nothing here needs regular updates:
+
+- **Actions** are pinned by commit, like every workflow in this repo, and Dependabot's github-actions updates
+  cover `web.yml` with the others.
+- **torch, transformers, peft, huggingface_hub** are not pinned: the jobs install what `pip install -e .` resolves.
+- **The ONNX toolchain** (`convert/requirements.txt`) and **ONNX Runtime Web** (`package.json`) are pinned exactly,
+  because they decide the graph and must agree with each other. Nothing watches them, so they produce no update
+  PRs; change them only on purpose (a change to `requirements.txt` converts the release again, and the tests check
+  the result in three browsers).
+- **Node** is the current LTS and **Python** 3.12, as in the other workflows.
 
 ## Credits and license
 

@@ -86,7 +86,7 @@ test("site: answers like Python, caches, prunes stale files", async ({ browserNa
     await page.close();
 
     ({ page, logs, info } = await open(ctx));
-    expect(info.cached).toBe(true);
+    expect(info.cached, logs.filter((l) => l.startsWith("[decider]")).join("\n")).toBe(true);
     await expect(page.getByTestId("answer")).toContainText("billing", { timeout: 60_000 });
     const cached = await page.evaluate(async () => {
       const dir = await (await navigator.storage.getDirectory()).getDirectoryHandle("strands-decider-weights"), names = [];

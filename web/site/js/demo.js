@@ -36,6 +36,7 @@ const decider = new Decider({ weights, onEvent: (e) => {
     $("loadbar").firstElementChild.style.width = `${(100 * g / t).toFixed(0)}%`;
     $("p-status").innerHTML = `${e.cached ? "reading cache" : "downloading"} <b>${(g / 2 ** 20).toFixed(0)} MiB</b>`;
   }
+  if (e.type === "status") console.info(`[decider] ${e.msg}`);
   if (e.type === "status" && e.runtime) $("p-backend").innerHTML = `ONNX Runtime Web <b>${e.runtime === "webgpu" ? "WebGPU" : "WASM (CPU)"}</b>`;
 }});
 window.decider = decider;
