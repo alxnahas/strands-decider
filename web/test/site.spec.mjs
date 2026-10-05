@@ -86,7 +86,10 @@ test("site: answers like Python, caches, prunes stale files", async ({ browserNa
     await page.close();
 
     ({ page, logs, info } = await open(ctx));
-    expect(info.cached, logs.filter((l) => l.startsWith("[decider]")).join("\n")).toBe(true);
+    // Playwright's WebKit on Linux grants an origin less storage than the model needs; the page must then say so and
+    // run uncached (Safari's WebKit on macOS grants about 20 GB, and caches). Everywhere else the reload is cached.
+    const noRoom = browserName === "webkit" && process.platform === "linux" && logs.includes("[decider] not enough storage to cache the model");
+    expect(info.cached, logs.filter((l) => l.startsWith("[decider]")).join("\n")).toBe(!noRoom);
     await expect(page.getByTestId("answer")).toContainText("billing", { timeout: 60_000 });
     const cached = await page.evaluate(async () => {
       const dir = await (await navigator.storage.getDirectory()).getDirectoryHandle("strands-decider-weights"), names = [];
@@ -94,7 +97,8 @@ test("site: answers like Python, caches, prunes stale files", async ({ browserNa
       return names.sort();
     });
     const manifest = JSON.parse(fs.readFileSync(path.join(W, "manifest.json"), "utf8"));
-    expect(cached).toEqual([...new Set(Object.values(manifest.files).map((f) => f.sha256))].sort());
+    // The stale file is gone either way; without room, nothing else was written.
+    expect(cached).toEqual(noRoom ? [] : [...new Set(Object.values(manifest.files).map((f) => f.sha256))].sort());
     expect([...hosts].sort()).toEqual([`127.0.0.1:${SITE}`, `127.0.0.1:${WEIGHTS}`]);
     console.log("ort files:", [...files].filter((f) => f.includes("/ort/")).join(" "));
     expect(logs.filter((l) => /error|failed|404/i.test(l))).toEqual([]);
