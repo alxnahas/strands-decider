@@ -20,7 +20,7 @@ import contextlib
 import json
 import os
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
 import torch
@@ -100,6 +100,10 @@ class StrandsDeciderConfig:
     # only and never trained, so moving it off the GPU frees that memory at no measured
     # cost in speed. Off by default; a torso without such a table ignores it.
     host_embeddings: bool = False
+    # A checkpoint subdirectory holding the whole torso, loaded in place of base_model and
+    # the LoRA adapter: a merged or pruned build. Its adapters.safetensors, when present,
+    # holds residual blocks standing in for removed layers (ResidualAdapter).
+    torso_dir: str | None = None
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), indent=2)
@@ -114,6 +118,51 @@ class StrandsDeciderConfig:
             raise ValueError(f"{path}: full_weight_targets is set; this version loads LoRA "
                              "checkpoints only")
         return cls(**d)
+
+
+class ResidualAdapter(nn.Module):
+    """h + W rms_norm(h) + b: one linear block in place of decoder layers a pruned build
+    removed. Its norm has no weight; rms_norm runs in float32 and the projection in the
+    adapter's dtype."""
+
+    def __init__(self, weight: torch.Tensor, bias: torch.Tensor, eps: float):
+        super().__init__()
+        self.proj = nn.Linear(weight.shape[1], weight.shape[0], dtype=weight.dtype)
+        self.proj.weight.data.copy_(weight)
+        self.proj.bias.data.copy_(bias)
+        self.eps = eps
+
+    def forward(self, h: torch.Tensor) -> torch.Tensor:
+        x = F.rms_norm(h.float(), (h.size(-1),), eps=self.eps).to(self.proj.weight.dtype)
+        out: torch.Tensor = h + self.proj(x).to(h.dtype)
+        return out
+
+
+def attach_residual_adapters(torso: Any, path: str) -> int:
+    """Insert the ResidualAdapters of `path`/adapters.safetensors, keys "<i>.weight" and
+    "<i>.bias" for the block applied to the output of decoder layer i. Each runs as a
+    forward hook on its layer and is registered as that layer's submodule, so it moves
+    and casts with the torso. Returns the number attached."""
+    file = os.path.join(path, "adapters.safetensors")
+    if not os.path.exists(file):
+        return 0
+    from safetensors.torch import load_file
+
+    state = load_file(file)
+    eps = float(torso.config.rms_norm_eps)
+    layers: nn.ModuleList = torso.layers
+    idx = sorted({int(k.split(".")[0]) for k in state})
+    for i in idx:
+        adapter = ResidualAdapter(state[f"{i}.weight"], state[f"{i}.bias"], eps)
+        layers[i].add_module("residual_adapter", adapter)
+
+        def hook(mod: nn.Module, args: Any, out: Any, adapter: ResidualAdapter = adapter) -> Any:
+            if isinstance(out, tuple):
+                return (adapter(out[0]), *out[1:])
+            return adapter(out)
+
+        layers[i].register_forward_hook(hook)
+    return len(idx)
 
 
 class HostEmbedding(nn.Module):
@@ -625,6 +674,8 @@ class StrandsDeciderModel(nn.Module):
         # Check the checkpoint's own files before the torso loads its 2B weights. Without
         # this check, a checkpoint without its adapter loads and gives other probabilities.
         lora_dir = os.path.join(path, "lora")
+        if config.torso_dir and config.use_lora:
+            raise ValueError(f"{config_path(path)}: torso_dir and use_lora are both set")
         if config.use_lora and not os.path.isdir(lora_dir):
             raise FileNotFoundError(
                 f"{lora_dir}: missing, but {os.path.basename(config_path(path))} sets use_lora"
@@ -636,7 +687,15 @@ class StrandsDeciderModel(nn.Module):
         if config.force_bos:  # saved with the tokenizer; this only guards a lossy save
             ensure_bos(tok)
 
-        torso = cls._load_torso(config, device_map, attn_implementation)
+        if config.torso_dir:
+            torso_path = os.path.join(path, config.torso_dir)
+            torso = cls._load_torso(
+                replace(config, base_model=torso_path, base_revision=None),
+                device_map, attn_implementation,
+            )
+            attach_residual_adapters(torso, torso_path)
+        else:
+            torso = cls._load_torso(config, device_map, attn_implementation)
 
         if config.use_lora:
             from peft import PeftModel

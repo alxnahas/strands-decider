@@ -209,3 +209,57 @@ def test_the_torso_config_and_weights_load_at_the_pinned_revision(monkeypatch):
     config = StrandsDeciderConfig(base_model="tiny", base_revision="abc123", torch_dtype="float32")
     StrandsDeciderModel._load_torso(config, None, None)
     assert revisions == [("config", "abc123"), ("model", "abc123")]
+
+
+def _pruned(tmp_path, adapter):
+    """A torso_dir checkpoint: a tiny two-layer Qwen3 torso saved whole under `torso/`, with
+    `adapter` ({"<i>.weight", "<i>.bias"}) as its adapters.safetensors when given."""
+    from safetensors.torch import save_file
+    from transformers import Qwen3Config, Qwen3Model
+
+    torch.manual_seed(0)
+    torso = Qwen3Model(Qwen3Config(vocab_size=6, hidden_size=32, intermediate_size=64,
+                                   num_hidden_layers=2, num_attention_heads=4,
+                                   num_key_value_heads=2, head_dim=8))
+    path = tmp_path / "pruned"
+    torso.save_pretrained(path / "torso")
+    if adapter:
+        save_file(adapter, str(path / "torso" / "adapters.safetensors"))
+    cfg = StrandsDeciderConfig(base_model="not-downloaded", head_type="pointer", pointer_dim=16,
+                               torch_dtype="float32", use_lora=False, torso_dir="torso")
+    StrandsDeciderModel(cfg, torso, _tokenizer()).save_pretrained(str(path))
+    return path, torso
+
+
+def test_a_torso_dir_checkpoint_loads_its_own_torso_and_residual_adapter(tmp_path):
+    w, b = torch.randn(32, 32), torch.randn(32)
+    path, torso = _pruned(tmp_path, {"0.weight": w, "0.bias": b})
+    model = StrandsDeciderModel.load(str(path))
+    assert isinstance(model.torso, type(torso))  # no PEFT wrapper
+
+    seen = []
+    torso.layers[0].register_forward_hook(lambda mod, args, out: seen.append(out))
+    ids = torch.tensor([[3, 4, 5]])
+    with torch.no_grad():
+        torso(input_ids=ids)
+        h = seen[0][0] if isinstance(seen[0], tuple) else seen[0]
+        want = h + torch.nn.functional.rms_norm(h, (32,), eps=torso.config.rms_norm_eps) @ w.T + b
+        loaded = model.torso.layers[0].residual_adapter(h)
+    torch.testing.assert_close(loaded, want)
+    assert not hasattr(model.torso.layers[1], "residual_adapter")
+
+
+def test_a_zero_residual_adapter_leaves_the_torso_unchanged(tmp_path):
+    path, torso = _pruned(tmp_path, {"1.weight": torch.zeros(32, 32), "1.bias": torch.zeros(32)})
+    model = StrandsDeciderModel.load(str(path))
+    ids, mask = torch.tensor([[3, 4, 5]]), torch.ones(1, 3, dtype=torch.long)
+    with torch.no_grad():
+        torch.testing.assert_close(model.encode(ids, mask), torso(input_ids=ids, attention_mask=mask).last_hidden_state)
+
+
+def test_torso_dir_with_lora_is_refused(tmp_path):
+    path, _ = _pruned(tmp_path, None)
+    cfg = json.loads((path / "strands_decider_config.json").read_text())
+    (path / "strands_decider_config.json").write_text(json.dumps(dict(cfg, use_lora=True)))
+    with pytest.raises(ValueError, match="torso_dir and use_lora"):
+        StrandsDeciderModel.load(str(path))
